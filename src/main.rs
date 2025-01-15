@@ -1,7 +1,11 @@
+mod formatter;
+
 use std::io::Read;
 use std::io::IsTerminal;
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use scraper::{Html, Selector, ElementRef};
+use formatter::{parse_and_print_html_indented, parse_and_print_html_unindented};
+
 
 /// hq is a CLI to help you query HTML documents like `jq`.
 #[derive(Parser, Debug)]
@@ -13,27 +17,43 @@ struct Args {
     /// Path to the HTML file to query (defaults to stdin)
     path: Option<String>,
 
-    /// Output mode
-    #[arg(short, long, value_enum, default_value_t = SelectMode::All)]
-    select: SelectMode,
+    /// Select all matches (default)
+    #[arg(short, long, default_value_t = true, group = "select")]
+    all_matches: bool,
 
-    /// Return mode
-    #[arg(short, long, value_enum, default_value_t = ContentMode::Outer)]
-    content: ContentMode,
+    /// Select the first match
+    #[arg(short, long, default_value_t = false, group = "select")]
+    first_match: bool,
+
+    /// Return outer HTML (default)
+    #[arg(short, long, default_value_t = true, group = "content")]
+    outer_html: bool,
+
+    /// Return inner HTML
+    #[arg(short, long, default_value_t = false, group = "content")]
+    inner_html: bool,
+
+    /// Return text content
+    #[arg(short, long, default_value_t = false, group = "content")]
+    text: bool,
 
     /// Debug mode
     #[arg(short, long)]
     debug: bool,
+
+    /// Indent output
+    #[arg(long, default_value_t = false)]
+    indent: bool,
 }
 
-#[derive(Debug, Clone, Default, ValueEnum, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 enum SelectMode {
   #[default]
   All,
   One,
 }
 
-#[derive(Debug, Clone, Default, ValueEnum, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 enum ContentMode {
   #[default]
   Outer,
@@ -81,7 +101,8 @@ fn read_input(path: Option<String>) -> Result<String, InputError> {
 }
 
 fn parse_query(query: &str) -> Result<Selector, String> {
-  Selector::parse(&query).map_err(|e| format!("Invalid selector: {}", e))
+  Selector::parse(&query)
+    .map_err(|e| format!("Invalid selector: {}", e))
 }
 
 fn parse_element(element: ElementRef, content: &ContentMode) -> String {
@@ -103,31 +124,32 @@ fn query_html(html: Html, query: Selector, select: SelectMode, content: ContentM
   Ok(res)
 }
 
-fn print_result(result: Vec<String>) {
+fn print_result(result: Vec<String>, unindented: bool) {
   for r in result {
-    println!("{}", deindent(&r));
+    if unindented {
+      parse_and_print_html_unindented(&r, false);
+    } else {
+      parse_and_print_html_indented(&r, false);
+    }
   }
-}
-
-fn deindent(text: &str) -> String {
-  let lines = text
-    .lines()
-    .collect::<Vec<_>>();
-  let min_space_pfx = lines
-    .iter()
-    .map(|line| line.len() - line.trim_start().len())
-    .min()
-    .unwrap_or(0);
-  lines
-    .iter()
-    .map(|line| line[min_space_pfx..].to_string())
-    .collect::<Vec<_>>()
-    .join("\n")
 }
 
 fn main() {
   // Parse the CLI arguments
   let app = Args::parse();
+
+  let content = match (app.outer_html, app.inner_html, app.text) {
+    (true, false, false) => ContentMode::Outer,
+    (false, true, false) => ContentMode::Inner,
+    (false, false, true) => ContentMode::Text,
+    _ => ContentMode::default(),
+  };
+
+  let select = match (app.all_matches, app.first_match) {
+    (true, false) => SelectMode::All,
+    (false, true) => SelectMode::One,
+    _ => SelectMode::default(),
+  };
 
   // Read the input
   let raw = match read_input(app.path) {
@@ -163,7 +185,7 @@ fn main() {
   };
 
   // Query the HTML
-  let result = match query_html(html, query, app.select, app.content) {
+  let result = match query_html(html, query, select, content) {
     Ok(result) => result,
     Err(e) => {
       eprintln!("Error querying HTML: {}", e);
@@ -172,34 +194,17 @@ fn main() {
   };
 
   // Print the result
-  print_result(result);
+  print_result(result, !app.indent);
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
 
-  // #[test]
-  // fn test_read_input() {}
-
   #[test]
   fn test_parse_query() {
     assert!(parse_query("div").is_ok());
     assert!(parse_query("").is_err());
     assert!(parse_query(".foo").is_ok());
-  }
-
-  // #[test]
-  // fn test_parse_element() {}
-
-  // #[test]
-  // fn test_query_html() {}
-
-  #[test]
-  fn test_deindent() {
-    assert_eq!(deindent("  foo\n  bar"), "foo\nbar");
-    assert_eq!(deindent("foo\n  bar"), "foo\n  bar");
-    assert_eq!(deindent("foo\nbar"), "foo\nbar");
-    assert_eq!(deindent("foo\n  bar\n    baz"), "foo\n  bar\n    baz");
   }
 }

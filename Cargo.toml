@@ -6,4 +6,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.95"
 clap = { version = "4.5.26", features = ["derive"] }
+html5ever = "0.27.0"
+markup5ever = "0.14.0"
+markup5ever_rcdom = "0.3.0"
 scraper = "0.22.0"
